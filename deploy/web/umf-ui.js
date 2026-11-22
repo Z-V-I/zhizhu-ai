@@ -3141,6 +3141,42 @@
    * 新 URL 在边缘没有缓存，第一次请求就回源拿到新图。
    * 每 1.2 秒扫一次：登录↔注册切换、路由跳转都会重建这个 <img>。
    */
+  /* ------------------------------------------------------------ 登录页署名
+   * 页脚那套是替换 LibreChat 自带的 markdown 页脚，只在登录后的界面里有。
+   * 登录页是站点的公开门面 —— 不登录也该看到「谁做的、站在什么之上」，
+   * 所以这里单独挂一块，而且**只在 /login 出现**，不污染聊天页。
+   *
+   * 挂在 body 上而不是 #root 里：body 不归 React 管，插节点不会触发
+   * 那个 insertBefore 崩溃（这个坑在其它地方已经踩过）。
+   * pointer-events:none 保证它不会挡住底部的任何按钮。
+   */
+  var LOGIN_CREDIT_ID = 'umf-login-credit';
+
+  function loginCredit() {
+    try {
+      var p = location.pathname.replace(/\/+$/, '') || '/';
+      var existing = document.getElementById(LOGIN_CREDIT_ID);
+      if (p !== '/login') {
+        if (existing) existing.remove();
+        return;
+      }
+      if (existing) return;
+      var box = document.createElement('div');
+      box.id = LOGIN_CREDIT_ID;
+      box.setAttribute(
+        'style',
+        'position:fixed;left:0;right:0;bottom:10px;z-index:1;' +
+        'text-align:center;font-size:11.5px;line-height:1.7;' +
+        'color:inherit;opacity:.5;pointer-events:none;white-space:pre-line'
+      );
+      box.textContent = [
+        '© 2026 Zvi. All rights reserved.',
+        'Powered by LibreChat & FastAPI · Icons by Lucide · Built with DeepSeek & CodeBuddy',
+      ].join('\n');
+      document.body.appendChild(box);
+    } catch (e) { /* ignore */ }
+  }
+
   var UM_BRAND_LOGO = '/icons/logo-256.png?v=zhu1';
   function fixBrandLogo() {
     var imgs = document.querySelectorAll('img[src*="assets/logo.svg"]');
@@ -3152,6 +3188,10 @@
   }
   fixBrandLogo();
   setInterval(fixBrandLogo, 1200);
+  /* 登录页署名跟着路由走：SPA 从 /login 跳到聊天页时它必须消失，
+   * 所以复用同一个 1.2s 心跳，而不是只在启动时挂一次。 */
+  loginCredit();
+  setInterval(loginCredit, 1200);
 
   /* ================================================================
    * 7. 「记忆」视图：在 SPA 内部渲染，不再跳独立页面
@@ -4822,6 +4862,17 @@
         out.push('ws=' + bs.whiteSpace);
         out.push('credit=' + String(w.getAttribute('data-umf-credit') || '').split('\n').length + '行');
         if (r.width < 120) out.push('!! 宽度过窄，可能竖排');
+      }
+      // 登录页署名是 dynamic 挂上去的，同样量一下：存在 + 可见 + 宽度
+      var lc = document.getElementById(LOGIN_CREDIT_ID);
+      if (lc) {
+        var lr = lc.getBoundingClientRect();
+        var ls = window.getComputedStyle(lc);
+        out.push('login-credit=' + Math.round(lr.width) + 'x' + Math.round(lr.height) +
+          ' hidden=' + (ls.display === 'none' || Number(ls.opacity) === 0) +
+          ' z=' + ls.zIndex + ' color=' + ls.color);
+      } else {
+        out.push('login-credit=absent(path=' + location.pathname + ')');
       }
       report('credit', { message: out.join(' | ') });
       var box = document.getElementById('umf-diag');

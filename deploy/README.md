@@ -6,7 +6,7 @@
 |---|---|---|
 | 适用 | 4C8G 以上，想开 LLMLingua / Mem0 / Meilisearch | **2C4G（阿里云新加坡 ¥50–100 档）** |
 | 组件 | caddy + api + client + brain + litellm + mongo + pg + redis + meili | caddy + api + brain + mongo + pg（5 个） |
-| 常驻内存 | 2.2–2.7 GB | **实测 1.3 GB（峰值）** |
+| 常驻内存 | 2.2–2.7 GB | **实测 0.6 GB** |
 | 模型路由 | LiteLLM（有后台、额度、日志） | brain 内置 `upstream.py`（别名 + 兜底，无后台） |
 | 前端 | 可 fork 自建 | **官方镜像产物抽出，caddy 直接托管**（`extract-static.sh`，零构建、零额外容器） |
 
