@@ -43,13 +43,13 @@ curl -sI https://$DOMAIN | head -1
 到这一步站点已经能开，但**数据库是空的**。要恢复数据继续：
 
 ```bash
-# 4. 恢复 Mongo
+# 4. 恢复 Mongo（★ 用干净的这份；要找回清理前的数据就换成不带 -clean 的文件名）
 docker exec -i umf-chat-lite-mongodb-1 \
-  mongorestore --drop --archive --gzip < /opt/umf/dumps/mongo-LibreChat.archive.gz
+  mongorestore --drop --archive --gzip < /opt/umf/dumps/mongo-LibreChat-clean.archive.gz
 
-# 5. 恢复 Postgres
+# 5. 恢复 Postgres（同上）
 docker exec -i umf-chat-lite-postgres-1 \
-  psql -U umf -d umf < <(gunzip -c /opt/umf/dumps/pg-umf.sql.gz)
+  psql -U umf -d umf < <(gunzip -c /opt/umf/dumps/pg-umf-clean.sql.gz)
 
 # 6. 重启让两边重新建连接
 docker compose -f docker-compose.lite.yml restart api brain

@@ -1,0 +1,35 @@
+# 2 GB 内存的调参覆盖层。
+#
+# 为什么要单独一个文件：docker-compose.lite.yml 是"2C4G 的正解"，
+# 4 GB 上不需要任何妥协。但 2 GB 机器上，默认参数会撞墙：
+#   · MongoDB 默认吃 256 MB WiredTiger 缓存，加上连接与索引开销能顶到 500 MB
+#   · api 限 768 MB，真 OOM 时它会把整机的余量吃光，连累旁边所有容器
+#   · 空载总量约 1.6 GB，正好超过 2 GB 机器的可用量
+#
+# 用法（覆盖层要放在后面，后者优先）：
+#   docker compose -f docker-compose.lite.yml -f docker-compose.2g.yml up -d
+#
+# 另外强烈建议同时加 2 GB swap（见 docs/13-2G服务器调参.md）：
+# swap 在这里不是性能手段，是"某天某个容器突然涨上去"时的缓冲垫，
+# 让 OOM killer 有机会只杀一个容器，而不是把整机拖死。
+
+services:
+  api:
+    # 从 768 降到 560：真到极限时优先牺牲它（重启即可恢复），
+    # 而不是让内核去挑更贵的目标（Mongo）。
+    mem_limit: 560m
+
+  mongodb:
+    # 0.1 GB 缓存对"一个人用、几千条消息"完全够；
+    # 数据量大了它自然会去磁盘读，慢但不会崩。
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.1"]
+    mem_limit: 320m
+
+  postgres:
+    mem_limit: 320m
+
+  brain:
+    mem_limit: 280m
+
+  caddy:
+    mem_limit: 96m

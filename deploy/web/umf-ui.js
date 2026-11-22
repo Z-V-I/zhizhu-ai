@@ -61,8 +61,10 @@
   /* 关于页的完整署名。写在这里而不是硬编码进 CSS：
    * 换域名、换年份、多接一个服务，只改这一处。
    * 分四段：版权 / 开源 / 服务 / 构建。中间空行靠 CSS 的 white-space:pre-line。 */
+  /* 关于页的署名。第一行是原来的那句话，保持原样 —— 那是站长自己的署名方式，
+   * 后面跟开源与服务清单（他要求「列出用了哪些开源项目、谁建的」）。 */
   var COPYRIGHT = [
-    '© 2026 Zvi. All rights reserved.',
+    '© 2026→ ∞  Zvi for 💕. All rights reserved.',
     '',
     '本站在这些开源项目之上构建',
     'LibreChat · FastAPI · MongoDB · PostgreSQL + pgvector',
@@ -141,9 +143,18 @@
     '  font-weight: 400;',
     '  letter-spacing: .01em;',
     '  line-height: 1.95;',
-    /* 同样用继承而不是猜变量：关于页在亮/暗两套主题下都要能读 */
-    '  color: inherit;',
-    '  opacity: .82;',
+    /* ★ 颜色必须用 var(--text-secondary)，不能猜、也不能用 rgb(var(...))。
+     *
+     * 查过编译产物里的真实定义：
+     *     --text-secondary: var(--gray-300)   ← 暗色，205 205 205
+     *     --text-secondary: var(--gray-600)   ← 亮色，66 66 66
+     * 也就是说它**本身就是一个颜色**，不是 RGB 通道。
+     * 以前写成 `rgb(var(--text-secondary))` 是无效 CSS，整条声明被丢弃、
+     * 于是回退成继承下来的白色 —— 亮色主题下就是白底白字，看不见。
+     * 直接 var() 取用，两套主题各自给值，跟随站点/系统主题自动切换。
+     * 后面的 inherit 只是极端情况（变量不存在）的兜底。 */
+    '  color: var(--text-secondary, inherit);',
+    '  opacity: .95;',
     '}',
     /* 隐藏用的通用类（只藏，不删） */
     '.umf-gone { display: none !important; }',
