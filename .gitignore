@@ -1,0 +1,22 @@
+# 密钥：只允许 .env.example 进仓库
+.env
+.env.*
+!.env.example
+*.bak
+*.bak.*
+
+# 运行时产物
+__pycache__/
+*.pyc
+node_modules/
+
+# 前端构建产物（用 scripts/extract-static.sh 从官方镜像抽出来）
+deploy/web/app/
+
+# 智能体导入的记账文件（每台机器不一样）
+deploy/.agent-import.json
+
+# 本地上游源码参考（用 scripts/fetch-vendor.sh 重新拉）
+vendor/
+backups/
+*.tar.gz

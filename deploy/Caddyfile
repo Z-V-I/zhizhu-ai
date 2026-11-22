@@ -1,0 +1,160 @@
+{$DOMAIN} {
+
+	# ---- 胶水层：记忆中心 / 迁移中心 / 网关接口 ----
+	# flush_interval -1 是 SSE 流式的命门，少了它回复会"憋"成一大段一次性吐出来
+	handle /api/umf/* {
+		reverse_proxy brain:8000 {
+			flush_interval -1
+		}
+		header Cache-Control "no-store"
+	}
+
+	handle /umf-ui/* {
+		reverse_proxy brain:8000
+	}
+
+	# ---- 记忆中心：主页面的「记忆」入口指向这里 ----
+	# 数据与隐私那一整块被删掉后，导入/导出都挪到了这个页面。
+	handle /memory {
+		reverse_proxy brain:8000
+		# 不许中间层改写/压缩这个页面，模板和 JSON 一起走
+		header Cache-Control "no-cache"
+	}
+
+	# 运行时裁剪层：不要缓存，改完刷新就生效
+	# ★ 从 /srv/web 出，不是 /srv/web/app —— app/ 是 extract-static.sh 的产物，
+	#   那个脚本第一件事就是 rm -rf，把源码放进去等于每次重抽都被删掉。
+	handle /umf-ui.js {
+		root * /srv/web
+		# 必须 no-store：只写 no-cache 的话，CF 会把它当静态 js 缓存 4 小时，
+		# 改了代码线上还是旧的（踩过，排查了很久）。
+		header Cache-Control "no-store, must-revalidate"
+		file_server
+	}
+
+	# ---- 运营后台（用户/追踪/日志/模型）----
+	# /admin 是旧入口，brain 里做了 307 跳到 /console#/models
+	handle /console {
+		reverse_proxy brain:8000
+	}
+
+	handle /admin {
+		reverse_proxy brain:8000
+	}
+
+	# 运营 API。不放在 /api/admin/* 是因为 LibreChat 自己也用那个前缀，
+	# 整段转发会把它的角色/用户管理接口全 404 掉。
+	handle /api/ops/* {
+		reverse_proxy brain:8000
+	}
+
+	# ---- 注册改走 brain：校验邀请码 + Turnstile 之后才转发给 LibreChat ----
+	# 放在 /api/* 之前，靠 Caddy「最长匹配优先」生效
+	handle /api/auth/register {
+		rewrite * /api/ops/public/register
+		reverse_proxy brain:8000
+	}
+
+	# 只收「厂商配置」这一支。整个 /api/admin/* 都转给 brain 会把 LibreChat 自己的
+	# 管理接口（角色、用户、配置）全部 404 掉 —— 那些是 api 容器在管。
+	handle /api/admin/providers* {
+		reverse_proxy brain:8000
+	}
+
+	# ---- 聊天 API（/images/ 也由它自己发，不用单独转发）----
+	handle /api/* {
+		reverse_proxy api:3080 {
+			flush_interval -1
+			transport http {
+				read_timeout 600s
+			}
+		}
+		# 只声明不缓存。绝对不要再动 Content-Encoding：
+		# 源站自己会 gzip，删掉这个头等于把压缩后的字节冒充成明文。
+		header Cache-Control "no-store"
+	}
+
+	# ---- 上传的文件（图片等）----
+	# 必须单独转发给 api：它的 filepath 是 /images/{userId}/{file}，
+	# 不转发就会落到下面的 SPA 兜底、返回 index.html ——
+	# 表现就是"聊天里上传的图片看不见、附件面板打不开"。
+	# 这些文件按用户分目录且 URL 不可猜，但仍然只给同源读，不做目录列表。
+	handle /images/* {
+		reverse_proxy api:3080
+		# 这里刻意不设任何 Cache-Control，交给 LibreChat 自己决定（它发 public, max-age=0）。
+		# ★ 血的教训：原本这里无条件加 "private, max-age=86400"，
+		#   结果鉴权失败时的 403 也被浏览器缓存了一整天。后来服务端修好返回 200，
+		#   用户浏览器仍在用那个缓存的 403 —— 表现为"头像永远出不来，刷新也不管用"。
+		#   想只给 2xx 加缓存头需要 status 匹配器，但这个 Caddy 构建没编进去
+		#   （caddy validate 报 module not registered: http.matchers.status），
+		#   所以干脆不设。图片在本地磁盘、体积小，每次校验的代价可以接受，
+		#   而不能缓存错误响应这件事必须保证。
+	}
+
+	# ---- PWA 三件套：从本地静态目录出，不经过任何容器 ----
+	handle /manifest.webmanifest {
+		root * /srv/web
+		header Content-Type "application/manifest+json"
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+
+	handle /sw.js {
+		root * /srv/web
+		header Cache-Control "no-cache"
+		# Service Worker 默认只能控制自己所在目录，这行让它能接管整站
+		header Service-Worker-Allowed "/"
+		file_server
+	}
+
+	handle /icons/* {
+		root * /srv/web
+		header Cache-Control "public, max-age=604800"
+		file_server
+	}
+
+	# ---- 站点图标 ----
+	# 浏览器默认会直接请求 /favicon.ico。以前没有这条路由，
+	# 请求会落到下面的 catch-all 上、返回一份 index.html（状态 200、类型 text/html），
+	# 浏览器拿不到图标就沿用缓存里的旧 logo —— 表现为"换了图标但标签页还是旧的"。
+	# 所以这里必须有真实的 .ico 文件，且不能让它进缓存。
+	handle /favicon.ico {
+		root * /srv/web
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+
+	# ---- 已编译的前端产物（scripts/extract-static.sh 抽出来的）----
+	# 带 hash 的资源可以永久缓存，这是首屏第二次打开变快的唯一手段
+	handle /assets/* {
+		root * /srv/web/app
+		# 故意不在源站压缩：CF 会用 brotli 压得更小，且在边缘缓存一份给所有人
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# ---- 其余全部交给前端，找不到文件就回 index.html（前端路由）----
+	handle {
+		root * /srv/web/app
+		encode zstd gzip
+		header Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+		# 部分浏览器只认 Link 头里的 manifest（index.html 里那行是主路径，这是兜底）
+		Link "</manifest.webmanifest>; rel=manifest"
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}

@@ -1,0 +1,4 @@
+# 可选：Mem0 引擎。开启后由它负责抽取+混合检索，UMF 表仍是真相源。
+# 不装就是自带的 extract + pgvector，功能等价、依赖更少。
+mem0ai==2.2.1
+psycopg[binary,pool]==3.2.*

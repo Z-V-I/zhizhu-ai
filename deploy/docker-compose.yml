@@ -1,0 +1,182 @@
+name: umf-chat
+
+# 个人版全栈。单机跑通即可，不做高可用。
+# 说明：LibreChat 官方镜像名随版本变动，若 pull 失败以官方 deploy-compose.yml 为准；
+#      M1 之后换成自建镜像（build: ./librechat-fork）即可，其余服务不动。
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - client
+      - brain
+
+  # ---- 聊天前端（M0 用官方镜像，M1 换成 fork 自建）----
+  api:
+    image: ghcr.io/danny-avila/librechat-dev-api:latest
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://mongodb:27017/LibreChat
+      MEILI_HOST: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      REDIS_URI: redis://redis:6379
+      CONFIG_PATH: /app/librechat.yaml
+      CREDS_KEY: ${CREDS_KEY}
+      CREDS_IV: ${CREDS_IV}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ALLOW_REGISTRATION: "false"
+      ALLOW_EMAIL_LOGIN: "true"
+      ALLOW_PASSWORD_RESET: "false"
+      SEARCH: "true"
+      # 关掉 LibreChat 自带记忆：记忆统一走 Brain Gateway，避免两套系统打架
+      MEMORY_DISABLED: "true"
+    volumes:
+      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      - librechat_images:/app/client/public/images
+      - librechat_logs:/app/api/logs
+    depends_on:
+      - mongodb
+      - meilisearch
+      - redis
+
+  client:
+    image: ghcr.io/danny-avila/librechat-dev:latest
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      HOST: 0.0.0.0
+      PORT: 80
+    depends_on:
+      - api
+
+  # ---- 胶水层：记忆注入 / UMF / 迁移 / 邀请码 ----
+  brain:
+    build:
+      context: ./brain
+      args:
+        # 想在服务端直接 docker compose build 出带 LLMLingua 的镜像：WITH_COMPRESS=1
+        # 想启用 Mem0 引擎（而不是自带抽取）：WITH_MEM0=1 && MEM0_ENABLED=1
+        WITH_COMPRESS: ${WITH_COMPRESS:-0}
+        WITH_MEM0: ${WITH_MEM0:-0}
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      LITELLM_BASE: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://umf:${POSTGRES_PASSWORD}@postgres:5432/umf
+      JWT_SECRET: ${JWT_SECRET}
+      UMF_UI_ORIGIN: https://${DOMAIN}
+      BRAIN_DEBUG: ${BRAIN_DEBUG:-0}
+      # 所有"杂活"都走这个别名，改一处就能全站换更便宜的模型
+      CHEAP_MODEL: ${CHEAP_MODEL:-cheap-extract}
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
+      # 上下文总预算：这是省钱的总闸门
+      HISTORY_BUDGET_TOKENS: ${HISTORY_BUDGET_TOKENS:-8000}
+      KEEP_RECENT_TURNS: ${KEEP_RECENT_TURNS:-8}
+      MEMORY_TOP_K: ${MEMORY_TOP_K:-8}
+      COMPRESS_ENABLED: ${COMPRESS_ENABLED:-1}
+      COMPRESS_RATIO: ${COMPRESS_RATIO:-0.6}
+      LLMLINGUA_MODEL: ${LLMLINGUA_MODEL:-microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank}
+      MEM0_ENABLED: ${MEM0_ENABLED:-0}
+      HF_HOME: /data/hf
+    volumes:
+      # LLMLingua 的模型缓存，重启不用重下
+      - brain_cache:/data/hf
+    depends_on:
+      - litellm
+      - postgres
+
+  # ---- 模型网关：8 家统一 OpenAI 兼容入口 ----
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      HUNYUAN_API_KEY: ${HUNYUAN_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      XAI_API_KEY: ${XAI_API_KEY}
+      # 想统计每个朋友花了多少：取消下面两行注释，并把容器内 prisma 迁移跑一次
+      # DATABASE_URL: postgresql://umf:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      # STORE_MODEL_IN_DB: "false"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    depends_on:
+      - postgres
+
+  # ---- 存储 ----
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["mongod", "--wiredTigerCacheSizeGB", "1"]
+    volumes:
+      - mongo_data:/data/db
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: umf
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: umf
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+
+  # 内存紧张（2C4G）时可整段删掉，并把 api 的 SEARCH 改成 false
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meili_data:/meili_data
+
+volumes:
+  caddy_data:
+  caddy_config:
+  mongo_data:
+  pg_data:
+  redis_data:
+  meili_data:
+  librechat_images:
+  librechat_logs:
+  brain_cache:

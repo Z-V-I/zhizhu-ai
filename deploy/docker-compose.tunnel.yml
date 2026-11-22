@@ -1,0 +1,24 @@
+# 可选覆盖层：用 Cloudflare Tunnel 上线，不开放 80/443。
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d
+#
+# 前提：CF Zero Trust → Networks → Tunnels 建一条，Public Hostname 指向 http://caddy:80
+# 注意：Tunnel 只解决"入站"。你的机器访问 OpenAI/Gemini 的出站路由不会因此改变，
+#      国内宿主机照样调不通那三家 —— 见 docs/03-Cloudflare边界.md §3.1
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - caddy
+
+  caddy:
+    # 有了 Tunnel 就不需要占宿主机的 80/443
+    ports: !reset []
+    environment:
+      # 让 Caddy 只监听 :80，TLS 交给 Cloudflare 边缘
+      DOMAIN: ":80"

@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#171717" />
+<title>记忆 · UMF</title>
+<style>
+  /* ---------------------------------------------------------------
+     这套变量照 LibreChat 的暗色/亮色 token 抄，目的是让这一页看起来
+     是「站内的一页」，而不是外挂的一个表单：同宽左栏、同色面板、
+     同一种分隔线和圆角。
+     --------------------------------------------------------------- */
+  :root {
+    --sidebar: #171717;
+    --surface: #212121;
+    --surface-2: #2a2a2a;
+    --surface-3: #333333;
+    --line: rgba(255, 255, 255, .10);
+    --line-strong: rgba(255, 255, 255, .18);
+    --text: #ececec;
+    --text-2: #b4b4b4;
+    --text-3: #8e8e8e;
+    --brand: #19c37d;
+    --brand-ink: #06231b;
+    --danger: #f05252;
+    --hover: rgba(255, 255, 255, .06);
+    --radius: 12px;
+  }
+  html.light {
+    --sidebar: #f9f9f9;
+    --surface: #ffffff;
+    --surface-2: #f4f4f4;
+    --surface-3: #ececec;
+    --line: rgba(0, 0, 0, .10);
+    --line-strong: rgba(0, 0, 0, .18);
+    --text: #0d0d0d;
+    --text-2: #5d5d5d;
+    --text-3: #8f8f8f;
+    --brand: #0f9d76;
+    --brand-ink: #ffffff;
+    --hover: rgba(0, 0, 0, .05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--surface);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; }
+
+  .app { display: flex; height: 100%; overflow: hidden; }
+
+  /* ---------- 左栏：与聊天页同宽同色 ---------- */
+  .nav {
+    width: 260px; flex: 0 0 260px; background: var(--sidebar);
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 10px; gap: 4px;
+    transition: width .18s ease, flex-basis .18s ease;
+  }
+  .nav.collapsed { width: 62px; flex-basis: 62px; padding: 10px 8px; }
+  .nav.collapsed .label, .nav.collapsed .brand-name, .nav.collapsed .newchat span { display: none; }
+  .nav.collapsed .newchat { justify-content: center; padding: 10px 0; }
+
+  .brand { display: flex; align-items: center; gap: 8px; padding: 6px 6px 10px; }
+  .brand-dot {
+    width: 26px; height: 26px; border-radius: 8px; flex: 0 0 26px;
+    background: linear-gradient(135deg, var(--brand), #4f8cff);
+    display: grid; place-items: center; color: #06231b; font-weight: 700; font-size: 13px;
+  }
+  .brand-name { font-weight: 600; letter-spacing: .3px; }
+  .icon-btn {
+    background: none; border: none; color: var(--text-2); cursor: pointer;
+    width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
+  .spacer { flex: 1; }
+
+  .newchat {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 999px; color: var(--text);
+    font-weight: 500; margin: 2px 0 8px;
+  }
+  .newchat:hover { background: var(--hover); }
+
+  .navlist { display: flex; flex-direction: column; gap: 2px; }
+  .item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+    border-radius: 8px; color: var(--text-2); font-size: 13.5px;
+  }
+  .item:hover { background: var(--hover); color: var(--text); }
+  .item.on { background: var(--surface-2); color: var(--text); font-weight: 500; }
+  .item svg { flex: 0 0 18px; opacity: .9; }
+  .nav-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
+
+  /* ---------- 主区 ---------- */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .topbar {
+    height: 56px; flex: 0 0 56px; display: flex; align-items: center; gap: 10px;
+    padding: 0 18px; border-bottom: 1px solid var(--line);
+  }
+  .topbar h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+  .topbar .sub { color: var(--text-3); font-size: 12px; }
+  .only-mobile { display: none; }
+
+  .scroll { flex: 1; overflow-y: auto; }
+  .content { max-width: 780px; margin: 0 auto; padding: 22px 20px 90px; }
+
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+  .tab {
+    background: none; border: none; color: var(--text-2); cursor: pointer;
+    padding: 10px 14px; font-size: 13.5px; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; border-radius: 8px 8px 0 0;
+  }
+  .tab:hover { color: var(--text); background: var(--hover); }
+  .tab.on { color: var(--text); border-bottom-color: var(--brand); font-weight: 500; }
+
+  .card {
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 14px;
+  }
+  .card-title { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+  .muted { color: var(--text-3); font-size: 12.5px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  input[type=text], textarea, select, input[type=file] {
+    background: var(--surface); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 10px 12px; font: inherit; outline: none; width: 100%;
+  }
+  input[type=text]:focus, textarea:focus, select:focus { border-color: var(--line-strong); }
+  textarea { resize: vertical; min-height: 70px; }
+  input[type=file] { padding: 8px; font-size: 12.5px; }
+
+  .btn {
+    background: var(--text); color: var(--surface); border: 1px solid transparent;
+    border-radius: 999px; padding: 9px 16px; font-weight: 600; font-size: 13px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { opacity: .88; }
+  .btn.ghost { background: transparent; color: var(--text); border-color: var(--line-strong); font-weight: 500; }
+  .btn.ghost:hover { background: var(--hover); }
+  .btn.brand { background: var(--brand); color: var(--brand-ink); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  a.btn { display: inline-block; }
+
+  .mem { display: flex; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+  .mem:last-child { border-bottom: none; padding-bottom: 0; }
+  .mem .body { flex: 1; min-width: 0; }
+  .mem .txt { white-space: pre-wrap; word-break: break-word; font-size: 13.5px; }
+  .mem .meta { margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .chip {
+    display: inline-block; font-size: 11px; color: var(--brand);
+    background: rgba(25, 195, 125, .14);
+    border: 1px solid rgba(25, 195, 125, .34);
+    padding: 1px 8px; border-radius: 999px;
+  }
+  .chip.gray { color: var(--text-3); background: var(--surface-3); border-color: var(--line); }
+  .del { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+  .del:hover { color: var(--danger); }
+
+  .drop {
+    border: 1.5px dashed var(--line-strong); border-radius: var(--radius);
+    padding: 26px 18px; text-align: center; cursor: pointer;
+  }
+  .drop:hover, .drop.hot { border-color: var(--brand); background: rgba(25, 195, 125, .07); }
+  .drop .t { font-size: 14px; margin-bottom: 6px; }
+  .hint { color: var(--text-3); font-size: 12px; margin-top: 8px; }
+
+  .stat { display: flex; gap: 22px; flex-wrap: wrap; margin: 12px 0 6px; }
+  .stat b { font-size: 19px; display: block; line-height: 1.2; }
+  .stat span { color: var(--text-3); font-size: 12px; }
+  .sample {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; margin: 6px 0; font-size: 13px;
+  }
+  .empty { color: var(--text-3); text-align: center; padding: 28px 0; font-size: 13px; }
+  .hidden { display: none !important; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: var(--surface-3); border: 1px solid var(--line); color: var(--text);
+    padding: 10px 16px; border-radius: 999px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: .2s; z-index: 40;
+  }
+  .toast.on { opacity: 1; }
+
+  @media (max-width: 720px) {
+    .nav {
+      position: fixed; inset: 0 auto 0 0; z-index: 30;
+      transform: translateX(-100%); transition: transform .2s ease; width: 260px; flex-basis: 260px;
+    }
+    .nav.open { transform: none; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .45); }
+    .only-mobile { display: grid; }
+    .content { padding: 16px 14px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 左栏 -->
+  <aside class="nav" id="nav">
+    <div class="brand">
+      <div class="brand-dot">U</div>
+      <div class="brand-name">UMF</div>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="collapse" title="收起侧栏" aria-label="收起侧栏">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+    </div>
+
+    <a class="newchat" href="/c/new">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+      <span>创建新对话</span>
+    </a>
+
+    <nav class="navlist">
+      <a class="item" href="/">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a8 8 0 0 1-8 8H8l-4 3v-6.5A8 8 0 0 1 12 4a8 8 0 0 1 9 8Z"/>
+        </svg>
+        <span class="label">对话</span>
+      </a>
+      <a class="item" href="/agents">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="8" width="18" height="12" rx="3"/><path d="M12 4v4M8 14h.01M16 14h.01M9 18h6"/>
+        </svg>
+        <span class="label">智能体市场</span>
+      </a>
+      <a class="item on" href="/memory" aria-current="page">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 4.5a3.5 3.5 0 0 0-3.5 3.5v.5A3 3 0 0 0 7 14v.5A3.5 3.5 0 0 0 12 18"/>
+          <path d="M12 4.5A3.5 3.5 0 0 1 15.5 8v.5A3 3 0 0 1 17 14v.5A3.5 3.5 0 0 1 12 18"/>
+          <path d="M12 4.5v13.5"/>
+        </svg>
+        <span class="label">记忆</span>
+      </a>
+    </nav>
+
+    <div class="nav-foot">
+      <button class="item" id="themeBtn" style="width:100%;background:none;border:none;cursor:pointer;text-align:left">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/>
+          <circle cx="12" cy="12" r="3.2"/>
+        </svg>
+        <span class="label">切换主题</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main class="main">
+    <div class="topbar">
+      <button class="icon-btn only-mobile" id="burger" aria-label="打开侧边栏">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+      <div>
+        <h1>记忆</h1>
+      </div>
+      <div class="spacer"></div>
+      <span class="sub">一个大脑 · 所有智能体共用</span>
+    </div>
+
+    <div class="scroll">
+      <div class="content">
+        <div class="tabs">
+          <button class="tab on" data-tab="list">记忆库</button>
+          <button class="tab" data-tab="import">导入</button>
+          <button class="tab" data-tab="export">导出</button>
+        </div>
+
+        <!-- 记忆库 -->
+        <section id="tab-list">
+          <div class="card">
+            <div class="row">
+              <input id="q" type="text" placeholder="搜点什么…（工作、偏好、项目名）" style="flex:1;min-width:180px" />
+              <button class="btn ghost" id="searchBtn">搜索</button>
+            </div>
+            <div style="margin-top:10px">
+              <textarea id="newText" placeholder="手动加一条：一句话，具体到名词（例：他在杭州做后端，主要用 Python）"></textarea>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <select id="newLayer" style="width:auto">
+                <option value="identity">身份（几乎不变）</option>
+                <option value="preference" selected>偏好（怎么回答你）</option>
+                <option value="experience">经验（踩过的坑）</option>
+                <option value="activity">进行中（有保质期）</option>
+                <option value="context">上下文（只这一次）</option>
+              </select>
+              <button class="btn brand" id="addBtn">加进去</button>
+              <span class="muted" id="count"></span>
+            </div>
+          </div>
+          <div class="card" id="listCard"><div class="empty">加载中…</div></div>
+        </section>
+
+        <!-- 导入 -->
+        <section id="tab-import" class="hidden">
+          <div class="card">
+            <div class="card-title">恢复历史对话</div>
+            <div class="muted" style="margin-bottom:12px">
+              把别处的备份变成这里的历史对话：导入后它们会出现在左侧对话列表里，
+              <b>点进去可以接着聊</b>，模型也能看到之前的上下文。
+            </div>
+
+            <div class="drop" id="drop">
+              <div class="t">把备份文件拖到这里，或点击选择</div>
+              <div class="muted">
+                支持：DeepSeek 官方导出包（.zip）· Google Takeout 的 Gemini 记录（.zip / .html）·
+                ChatGPT 的 conversations.json · 豆包单会话 JSON · 纯文本 .txt / .md
+              </div>
+            </div>
+            <input type="file" id="file" class="hidden" accept=".json,.txt,.md,.zip" />
+            <div class="row" style="margin-top:14px">
+              <button class="btn" id="histPreviewBtn" disabled>先预览</button>
+              <button class="btn brand" id="histImportBtn" disabled>导入为历史对话</button>
+              <span class="muted" id="fileName"></span>
+            </div>
+            <div id="histOut" style="margin-top:14px"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">各平台能导出什么</div>
+            <div class="muted" style="margin-bottom:8px">
+              不同平台的导出内容差别很大，先看一下再导，避免以为数据丢了。
+            </div>
+            <div style="font-size:13px;line-height:1.9">
+              <div><b>DeepSeek</b>　提问 + 回答齐全，带原始时间</div>
+              <div><b>豆包</b>　提问 + 回答齐全（一个文件一个会话，标题取自文件名）</div>
+              <div><b>ChatGPT</b>　提问 + 回答齐全（conversations.json）</div>
+              <div><b>Gemini</b>　提问 + 回答齐全，<b>图片附件也会一起搬过来</b>。
+                整包上传 Takeout 的 zip 即可，会自动找到活动记录。</div>
+            </div>
+            <div class="muted" style="margin-top:10px;font-size:12.5px">
+              说明：只搬图片附件。txt / xlsx / 压缩包这类文件在聊天里打不开，
+              硬塞进去只会变成一堆点不动的附件，所以跳过（原对话里仍会保留文件名）。
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">粘贴文本</div>
+            <div class="muted" style="margin-bottom:10px">
+              豆包 / Kimi / 通义大多只能复制对话文本。粘贴进来，会按 <code>用户:</code> / <code>助手:</code> 切分。
+            </div>
+            <textarea id="pasteText" placeholder="把整个对话粘贴进来，例如：&#10;用户: 帮我写个 Python 脚本&#10;助手: 好的，我先确认几个细节…"></textarea>
+            <div class="row" style="margin-top:10px">
+              <button class="btn brand" id="pasteBtn">导入为历史对话</button>
+              <span class="muted" id="pasteHint"></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">已导入的对话</div>
+            <div class="muted" style="margin-bottom:10px">
+              带「导入」标签的对话。不想要了可以一键撤销 —— 只删导入的，你自己聊的不受影响。
+            </div>
+            <div id="histList"><div class="empty">加载中…</div></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">提取记忆条目</div>
+            <div class="muted" style="margin-bottom:12px">
+              和上面不同：这一步是让模型从对话里<b>读出关于你的事实</b>（职业、偏好、踩过的坑），
+              存成记忆条目，用来构建用户画像。不影响历史对话。
+            </div>
+            <div class="row">
+              <button class="btn ghost" id="previewBtn" disabled>先预览</button>
+              <button class="btn ghost" id="directBtn" disabled>直接写入</button>
+              <span class="muted" id="memFileName"></span>
+            </div>
+            <div id="importOut" style="margin-top:14px"></div>
+          </div>
+        </section>
+
+        <!-- 导出 -->
+        <section id="tab-export" class="hidden">
+          <div class="card">
+            <div class="card-title">全量导出</div>
+            <div class="muted" style="margin-bottom:12px">
+              导出为一个文件：<b>全部聊天记录</b>（含从别处导入的）、画像、记忆条目、时间线。
+              换站或换机器时放回去，聊天记录和记忆都能恢复。
+            </div>
+
+            <div id="expStats" class="stat" style="margin-bottom:14px">
+              <div><b>—</b><span>对话</span></div>
+              <div><b>—</b><span>消息</span></div>
+              <div><b>—</b><span>记忆</span></div>
+            </div>
+
+            <div class="row">
+              <select id="expInclude" style="width:auto">
+                <option value="all" selected>全部（聊天记录 + 记忆 + 画像）</option>
+                <option value="conversations">只导聊天记录</option>
+                <option value="memories">只导记忆与画像</option>
+              </select>
+              <a class="btn brand" href="#" id="expJson">导出 JSON</a>
+              <a class="btn ghost" href="#" id="expMd">导出 Markdown</a>
+            </div>
+            <div class="muted" style="margin-top:10px">
+              JSON 用于回灌恢复；Markdown 是人类可读版本，方便存档或喂给别的模型。
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">回灌</div>
+            <div class="muted" style="margin-bottom:10px">
+              把之前导出的 <code>umf-export.json</code> 放回去：画像、记忆、聊天记录都会恢复。
+              重复导入同一份文件不会产生重复对话。
+            </div>
+            <div class="row">
+              <input type="file" id="umfFile" accept=".json" style="flex:1;min-width:180px" />
+              <button class="btn ghost" id="umfBtn">回灌</button>
+            </div>
+            <div id="umfOut" style="margin-top:12px"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---- 主题：默认跟聊天页一致（暗色），左栏可切 ----
+  var saved = '';
+  try { saved = localStorage.getItem('umf:theme') || ''; } catch (e) {}
+  var root = document.documentElement;
+  if (saved === 'light') root.classList.add('light');
+  else if (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) root.classList.add('light');
+
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    root.classList.toggle('light');
+    try { localStorage.setItem('umf:theme', root.classList.contains('light') ? 'light' : 'dark'); } catch (e) {}
+  });
+
+  // ---- 侧栏收起 / 移动端抽屉 ----
+  var nav = document.getElementById('nav');
+  document.getElementById('collapse').addEventListener('click', function () {
+    nav.classList.toggle('collapsed');
+    try { localStorage.setItem('umf:nav', nav.classList.contains('collapsed') ? '1' : '0'); } catch (e) {}
+  });
+  try { if (localStorage.getItem('umf:nav') === '1') nav.classList.add('collapsed'); } catch (e) {}
+  document.getElementById('burger').addEventListener('click', function () { nav.classList.add('open'); });
+  document.addEventListener('click', function (e) {
+    if (nav.classList.contains('open') && !nav.contains(e.target) && !e.target.closest('#burger')) {
+      nav.classList.remove('open');
+    }
+  });
+
+  // ---- 鉴权：登录态在同源 HttpOnly cookie 里，换一个短期 token ----
+  var token = '';
+  function auth() {
+    var m = /(?:^#|&)t=([^&]+)/.exec(location.hash || '');
+    if (m) return Promise.resolve(decodeURIComponent(m[1]));
+    return fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('未登录')); })
+      .then(function (d) { return d.token || ''; });
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ 'Authorization': 'Bearer ' + token }, opts.headers || {});
+    return fetch(path, opts).then(function (r) {
+      if (r.status === 401) throw new Error('登录已过期，回聊天页刷新一下再来');
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t.slice(0, 200)); });
+      var ct = r.headers.get('content-type') || '';
+      return ct.indexOf('application/json') >= 0 ? r.json() : r.text();
+    });
+  }
+
+  var toastT;
+  function toast(msg) {
+    var el = document.getElementById('toast');
+    el.textContent = msg; el.classList.add('on');
+    clearTimeout(toastT); toastT = setTimeout(function () { el.classList.remove('on'); }, 2600);
+  }
+
+  document.querySelectorAll('.tab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      ['list', 'import', 'export'].forEach(function (k) {
+        document.getElementById('tab-' + k).classList.toggle('hidden', k !== b.dataset.tab);
+      });
+      // 进导入页时刷新"已导入的对话"列表（loadHistory 在后面定义，
+      // 用 typeof 判断是为了避开脚本执行顺序问题）
+      if (b.dataset.tab === 'import' && typeof loadHistory === 'function') loadHistory();
+      if (b.dataset.tab === 'export' && typeof loadExportStats === 'function') loadExportStats();
+    });
+  });
+
+  var LAYER_TEXT = { identity: '身份', preference: '偏好', experience: '经验', activity: '进行中', context: '上下文' };
+  function esc(s) {
+    return (s || '').replace(/[&<>"]/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c];
+    });
+  }
+
+  function renderMemories(items) {
+    var card = document.getElementById('listCard');
+    document.getElementById('count').textContent = items.length ? '最近 ' + items.length + ' 条' : '';
+    if (!items.length) {
+      card.innerHTML = '<div class="empty">还没有记忆。聊几句它自己会长出来；也可以在上面手加一条。</div>';
+      return;
+    }
+    card.innerHTML = items.map(function (m) {
+      var layer = m.layer || m.kind || 'context';
+      var d = m.created_at ? String(m.created_at).slice(0, 10) : '';
+      return '<div class="mem">' +
+        '<div class="body"><div class="txt">' + esc(m.text) + '</div>' +
+        '<div class="meta"><span class="chip">' + (LAYER_TEXT[layer] || layer) + '</span>' +
+        '<span class="chip gray">' + esc(m.scope || 'global') + '</span>' +
+        (d ? '<span class="muted">' + d + '</span>' : '') + '</div></div>' +
+        '<button class="del" data-id="' + esc(m.id) + '">删除</button></div>';
+    }).join('');
+    card.querySelectorAll('.del').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!confirm('删掉这条记忆？')) return;
+        api('/api/umf/memories/' + b.dataset.id, { method: 'DELETE' })
+          .then(function () { toast('已删除'); load(); })
+          .catch(function (e) { toast(e.message); });
+      });
+    });
+  }
+
+  function load(q) {
+    var url = '/api/umf/memories?limit=100' + (q ? '&q=' + encodeURIComponent(q) : '');
+    api(url).then(function (d) { renderMemories(d.items || []); })
+      .catch(function (e) {
+        document.getElementById('listCard').innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+      });
+  }
+
+  document.getElementById('searchBtn').addEventListener('click', function () {
+    load(document.getElementById('q').value.trim());
+  });
+  document.getElementById('q').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') load(e.target.value.trim());
+  });
+
+  document.getElementById('addBtn').addEventListener('click', function () {
+    var t = document.getElementById('newText').value.trim();
+    if (!t) return toast('先写一句话');
+    api('/api/umf/memories', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: t, layer: document.getElementById('newLayer').value, scope: 'global' })
+    }).then(function () {
+      document.getElementById('newText').value = ''; toast('已记住'); load();
+    }).catch(function (e) { toast(e.message); });
+  });
+
+  // ---- 导入 ----
+  var picked = null;
+  var drop = document.getElementById('drop');
+  var fileInput = document.getElementById('file');
+
+  function setFile(f) {
+    picked = f;
+    var info = f ? (f.name + ' · ' + (f.size / 1024).toFixed(0) + ' KB') : '';
+    document.getElementById('fileName').textContent = info;
+    document.getElementById('memFileName').textContent = info;
+    ['previewBtn', 'directBtn', 'histPreviewBtn', 'histImportBtn'].forEach(function (id) {
+      document.getElementById(id).disabled = !f;
+    });
+  }
+  drop.addEventListener('click', function () { fileInput.click(); });
+  fileInput.addEventListener('change', function () { setFile(fileInput.files[0]); });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('hot'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('hot'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    var f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) setFile(f);
+  });
+
+  function out(html) { document.getElementById('importOut').innerHTML = html; }
+
+  function statBlock(s) {
+    return '<div class="stat">' +
+      '<div><b>' + (s.conversations || 0) + '</b><span>会话</span></div>' +
+      '<div><b>' + (s.extracted || 0) + '</b><span>抽出记忆</span></div>' +
+      (s.written !== undefined ? '<div><b>' + s.written + '</b><span>已写入</span></div>' : '') +
+      '</div><div class="muted">来源：' + esc(s.platform || '') + '</div>';
+  }
+
+  /* ================= 历史对话导入 =================
+   *
+   * 和上面的"提取记忆条目"是两件不同的事：
+   *   · 历史对话：把对话本身搬过来，能接着聊（写 Mongo）
+   *   · 记忆条目：从对话里读出关于你的事实，做画像（写 Postgres）
+   * 所以放两个独立按钮，不让用户混淆。
+   */
+
+  function histOut(html) { document.getElementById('histOut').innerHTML = html; }
+
+  function histStatBlock(s) {
+    return '<div class="stat">' +
+      '<div><b>' + (s.conversations || 0) + '</b><span>会话</span></div>' +
+      '<div><b>' + (s.messages || 0) + '</b><span>消息</span></div>' +
+      '</div><div class="muted">识别为：<b>' + esc(s.platform || '未知') + '</b></div>';
+  }
+
+  document.getElementById('histPreviewBtn').addEventListener('click', function () {
+    if (!picked) return;
+    var fd = new FormData(); fd.append('file', picked);
+    histOut('<div class="muted">正在解析备份，不写入任何东西…</div>');
+    api('/api/umf/history/import?dry_run=1', { method: 'POST', body: fd }).then(function (d) {
+      var html = histStatBlock(d.stats);
+      html += '<div style="margin:12px 0 6px">会导入这些对话（前 15 个）：</div>';
+      (d.preview || []).forEach(function (c) {
+        html += '<div class="sample">' +
+          '<b>' + esc(c.title || '未命名') + '</b>' +
+          '<span class="muted"> · ' + (c.messages || 0) + ' 条</span>' +
+          '<div class="muted" style="margin-top:4px">' + esc((c.first || '').slice(0, 110)) + '</div>' +
+          '</div>';
+      });
+      html += '<div class="muted" style="margin-top:12px">' +
+        '确认后会写进你的历史对话列表，随时可以撤销。' +
+        '</div>';
+      histOut(html);
+      document.getElementById('histImportBtn').disabled = false;
+    }).catch(function (e) {
+      histOut('<div class="chip bad">' + esc(e.message) + '</div>');
+    });
+  });
+
+  document.getElementById('histImportBtn').addEventListener('click', function () {
+    if (!picked) return;
+    var fd = new FormData(); fd.append('file', picked);
+    histOut('<div class="muted">正在写入历史对话，请稍候…</div>');
+    api('/api/umf/history/import?dry_run=0', { method: 'POST', body: fd }).then(function (d) {
+      var r = d.result || {};
+      var html = '<div class="chip ok">导入完成</div>' +
+        '<div class="stat" style="margin-top:10px">' +
+        '<div><b>' + (r.conversations || d.stats.conversations || 0) + '</b><span>已建对话</span></div>' +
+        '<div><b>' + (r.messages || d.stats.messages || 0) + '</b><span>已写消息</span></div>' +
+        '</div>';
+      if (r.skippedCount) {
+        html += '<div class="muted" style="margin-top:8px">跳过 ' + r.skippedCount + ' 个（重复或空会话）</div>';
+      }
+      html += '<div style="margin-top:14px"><a class="btn brand" href="/">去聊天页看看 →</a></div>';
+      histOut(html);
+      toast('已导入 ' + (r.conversations || 0) + ' 个对话');
+      loadHistory();
+    }).catch(function (e) {
+      histOut('<div class="chip bad">' + esc(e.message) + '</div>');
+    });
+  });
+
+  // ---- 粘贴导入 ----
+  document.getElementById('pasteBtn').addEventListener('click', function () {
+    var el = document.getElementById('pasteText');
+    var text = (el.value || '').trim();
+    if (text.length < 10) { toast('内容太短了'); return; }
+    var hint = document.getElementById('pasteHint');
+    hint.textContent = '正在导入…';
+    api('/api/umf/history/paste', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    }).then(function (d) {
+      var r = d.result || {};
+      hint.textContent = '';
+      el.value = '';
+      toast('已导入 ' + (r.messages || 0) + ' 条消息');
+      loadHistory();
+    }).catch(function (e) {
+      hint.textContent = '';
+      toast('失败：' + e.message);
+    });
+  });
+
+  // ---- 已导入列表（含撤销）----
+  function loadHistory() {
+    var box = document.getElementById('histList');
+    api('/api/umf/history').then(function (d) {
+      if (!d.mongo) {
+        box.innerHTML = '<div class="chip bad">后台未连上数据库，暂时看不到</div>';
+        return;
+      }
+      var items = d.items || [];
+      if (!items.length) {
+        box.innerHTML = '<div class="empty">还没有导入过对话</div>';
+        return;
+      }
+      var html = '<div class="row" style="margin-bottom:10px">' +
+        '<span class="muted">共 ' + items.length + ' 个</span>' +
+        '<div class="spacer"></div>' +
+        '<button class="btn ghost" id="purgeAll">全部撤销</button>' +
+        '</div>';
+      items.forEach(function (it) {
+        html += '<div class="row" style="border-top:1px solid var(--line);padding:9px 0">' +
+          '<div style="flex:1;min-width:0">' +
+          '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(it.title || '未命名') + '</div>' +
+          '<div class="muted">' + esc(it.platform || '') + ' · ' + (it.messageCount || 0) + ' 条 · ' +
+          esc((it.createdAt || '').slice(0, 10)) + '</div></div>' +
+          '<a class="btn ghost" href="/c/' + esc(it.conversationId) + '">打开</a>' +
+          '<button class="btn ghost" data-del="' + esc(it.conversationId) + '">撤销</button>' +
+          '</div>';
+      });
+      box.innerHTML = html;
+
+      box.querySelectorAll('[data-del]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          if (!confirm('撤销这个对话的导入？（只删导入的记录）')) return;
+          var cid = b.getAttribute('data-del');
+          api('/api/umf/history?conversation_id=' + encodeURIComponent(cid), { method: 'DELETE' })
+            .then(function () { toast('已撤销'); loadHistory(); })
+            .catch(function (e) { toast('失败：' + e.message); });
+        });
+      });
+      document.getElementById('purgeAll').addEventListener('click', function () {
+        if (!confirm('撤销全部导入的对话？你自己聊的不会受影响。')) return;
+        api('/api/umf/history', { method: 'DELETE' })
+          .then(function (d) { toast('已撤销 ' + (d.conversations || 0) + ' 个'); loadHistory(); })
+          .catch(function (e) { toast('失败：' + e.message); });
+      });
+    }).catch(function (e) {
+      box.innerHTML = '<div class="chip bad">' + esc(e.message) + '</div>';
+    });
+  }
+
+  document.getElementById('previewBtn').addEventListener('click', function () {
+    if (!picked) return;
+    var fd = new FormData(); fd.append('file', picked);
+    out('<div class="muted">正在读文件并抽取（要跑一遍便宜模型，几十秒）…</div>');
+    api('/api/umf/import?dry_run=1', { method: 'POST', body: fd }).then(function (d) {
+      var html = statBlock(d.stats) + '<div style="margin:10px 0 4px">抽到的记忆（前 12 条）</div>';
+      (d.samples || []).forEach(function (m) {
+        html += '<div class="sample"><span class="chip">' + (LAYER_TEXT[m.layer] || m.kind || '') + '</span>' + esc(m.text) +
+          (m.origin ? '<div class="muted" style="margin-top:4px">来自：' + esc(m.origin) + '</div>' : '') + '</div>';
+      });
+      html += '<div class="row" style="margin-top:12px"><button class="btn brand" id="commitBtn">写入这 ' + d.samples.length + '+ 条</button></div>';
+      out(html);
+      document.getElementById('commitBtn').addEventListener('click', function () {
+        api('/api/umf/import/commit', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batch: d.batch })
+        }).then(function (r) {
+          out(statBlock(r.stats) + '<div class="muted">完成。这些记忆现在所有智能体都能用。</div>');
+          toast('导入完成'); load();
+        }).catch(function (e) { toast(e.message); });
+      });
+    }).catch(function (e) { out('<div class="empty">' + esc(e.message) + '</div>'); });
+  });
+
+  document.getElementById('directBtn').addEventListener('click', function () {
+    if (!picked) return;
+    var fd = new FormData(); fd.append('file', picked);
+    out('<div class="muted">正在抽取并写入…</div>');
+    api('/api/umf/import/direct', { method: 'POST', body: fd }).then(function (r) {
+      out(statBlock(r.stats) + '<div class="muted">完成。</div>');
+      toast('导入完成'); load();
+    }).catch(function (e) { out('<div class="empty">' + esc(e.message) + '</div>'); });
+  });
+
+  // ---- 导出 ----
+  function dl(kind) {
+    var inc = document.getElementById('expInclude').value || 'all';
+    var btns = ['expJson', 'expMd'];
+    btns.forEach(function (id) { document.getElementById(id).style.opacity = '.5'; });
+    toast('正在打包，' + (inc === 'all' ? '含全部聊天记录，' : '') + '稍等…');
+
+    fetch('/api/umf/export?format=' + kind + '&include=' + inc, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('导出失败 ' + r.status);
+        return r.blob();
+      })
+      .then(function (b) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(b);
+        var stamp = new Date().toISOString().slice(0, 10);
+        a.download = 'umf-export-' + stamp + (kind === 'md' ? '.md' : '.json');
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+        toast('已导出 ' + Math.round(b.size / 1024) + ' KB');
+      })
+      .catch(function (e) { toast(e.message); })
+      .then(function () {
+        btns.forEach(function (id) { document.getElementById(id).style.opacity = ''; });
+      });
+  }
+  document.getElementById('expJson').addEventListener('click', function (e) { e.preventDefault(); dl('json'); });
+  document.getElementById('expMd').addEventListener('click', function (e) { e.preventDefault(); dl('md'); });
+
+  // 导出页顶部显示"有多少东西要导"，避免用户以为又导了个空壳
+  function loadExportStats() {
+    var box = document.getElementById('expStats');
+    if (!box) return;
+    api('/api/umf/history').then(function (d) {
+      var convs = (d.items || []).length;
+      var msgs = (d.items || []).reduce(function (n, it) { return n + (it.messageCount || 0); }, 0);
+      api('/api/umf/memories').then(function (m) {
+        var memCount = (m.items || m.memories || []).length;
+        box.innerHTML =
+          '<div><b>' + convs + '</b><span>导入的对话</span></div>' +
+          '<div><b>' + msgs + '</b><span>导入的消息</span></div>' +
+          '<div><b>' + memCount + '</b><span>记忆条目</span></div>';
+      }).catch(function () {
+        box.innerHTML = '<div><b>' + convs + '</b><span>导入的对话</span></div>' +
+          '<div><b>' + msgs + '</b><span>导入的消息</span></div>';
+      });
+    }).catch(function () {
+      box.innerHTML = '<div class="muted">统计不可用，不影响导出</div>';
+    });
+  }
+
+  document.getElementById('umfBtn').addEventListener('click', function () {
+    var f = document.getElementById('umfFile').files[0];
+    var box = document.getElementById('umfOut');
+    if (!f) return toast('先选一个 umf-export.json');
+    var fd = new FormData(); fd.append('file', f);
+    box.innerHTML = '<div class="muted">正在回灌…</div>';
+    api('/api/umf/import/umf', { method: 'POST', body: fd })
+      .then(function (r) {
+        var c = r.conversations || {};
+        var html = '<div class="chip ok">回灌完成</div><div class="stat" style="margin-top:10px">' +
+          '<div><b>' + (c.conversations || 0) + '</b><span>恢复对话</span></div>' +
+          '<div><b>' + (c.messages || 0) + '</b><span>恢复消息</span></div>' +
+          '<div><b>' + (r.written || 0) + '</b><span>记忆条目</span></div>' +
+          '</div>';
+        if (c.skippedCount) {
+          html += '<div class="muted" style="margin-top:8px">跳过 ' + c.skippedCount +
+            ' 个（已存在，未重复导入）</div>';
+        }
+        html += '<div style="margin-top:12px"><a class="btn brand" href="/">去聊天页看看 →</a></div>';
+        box.innerHTML = html;
+        toast('回灌完成');
+        load();
+        loadHistory();
+      })
+      .catch(function (e) {
+        box.innerHTML = '<div class="chip bad">' + esc(e.message) + '</div>';
+      });
+  });
+
+  auth().then(function (tk) {
+    token = tk;
+    if (!tk) throw new Error('没有拿到登录凭证，请从聊天页左侧「记忆」进入');
+    load();
+  }).catch(function (e) {
+    document.getElementById('listCard').innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+  });
+})();
+</script>
+</body>
+</html>

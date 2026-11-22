@@ -1,0 +1,247 @@
+# LibreChat · 只做两件事：把 Brain 当成一个模型端点；给几个用起来顺手的预设。
+# 关键点：baseURL 指向 brain（不是 litellm）。记忆注入在 brain 里完成，LibreChat 完全不知情。
+#
+# 这份配置整体的取舍只有一句话：**能砍的入口全砍掉，只留聊天 + 换厂商 + 智能体市场**。
+# 每砍一项都写了为什么，避免以后自己（或接手的人）又把它加回来。
+
+# 版本号必须跟着 LibreChat 走：它启动时会校验，不匹配只警告但最好对齐。
+# 当前对应上游 v0.8.9（config schema 1.3.19），换镜像时改这一行。
+version: 1.3.17
+cache: true
+
+interface:
+  # 选模型（9 张厂商卡）—— 必须留，这是用户唯一要做的选择
+  modelSelect: true
+  # 采样参数面板（温度/top_p/max_tokens）：个人自用不需要，且改了只会让便宜模型更不稳
+  parameters: false
+  # 预设/预设编辑器：和「参数」重复，删
+  presets: false
+  # 提示词库：LobeChat 的人格已经进了智能体市场，不需要第二套概念
+  prompts: false
+  # 书签入口前端隐藏（umf-ui.js 藏了 /bookmarks 链接），但这里必须为 true：
+  # 侧边栏的「对话分类」用的是同一套 tags 接口，关掉它 /api/tags 会 403，
+  # 分类栏整个消失。功能留着、入口藏掉，是这里唯一正确的组合。
+  bookmarks: true
+  # 多模型同时回答：2C4G 上开这个等于同时打 2~3 倍上游请求，删
+  multiConvo: false
+  # MCP 面板整套关掉：这个站只用「人格 Agent」，没有工具调用需求。
+  # 留着它只会让人（包括我）误以为这里能连外部工具，然后踩一堆配置坑。
+  mcpServers:
+    use: false
+    create: false
+    share: false
+  # 智能体：允许使用，也允许在「智能体市场」里就地新建（构建器已并入市场页）
+  agents:
+    use: true
+    create: true
+    share: false
+    public: false
+  # 内置记忆关掉：记忆统一走 Brain，入口在左侧「记忆」，不在设置里
+  memory: false
+  memories: false
+  marketplace:
+    use: true
+  # composer 上的工具按钮（联网/文件检索/跑代码）全关：这些都是要额外后端和 token 的
+  webSearch: false
+  fileSearch: false
+  fileCitations: false
+  runCode: false
+  # 反馈按钮（点赞点踩）：没有后端回收，删
+  feedback: false
+  # 设置 → 关于：保留这个 tab，但里面的构建信息（commit/版本/分支）
+  # 由前端裁剪层换掉（umf-ui.js 的 renderAbout）。关掉 buildInfo 会连 tab 一起消失。
+  buildInfo: true
+  # 无用的营销/吉祥物元素
+  mascot: false
+  landingFooter: false
+
+# ---- 文件上传 ----
+# 自用场景只要三样：纯文本（txt/md/csv）、图片、以及聊天里直接贴的长文本。
+# 明确**不收**：视频、压缩包、可执行文件、代码工程文件 —— 白名单比黑名单可靠。
+fileStrategy: local
+# 图片访问不做逐用户权限校验。
+# 为什么：本地存储的头像/图片走 /images/{userId}/{file}，服务端中间件会按
+# ACL 判断"这个 agent 能不能被你看"。但我们这 512 个 agent 全都没有 aclentries
+# （历史导入没有写权限表），结果是自己的 agent 头像被 403 —— 文件明明在磁盘上。
+#
+# 权衡：关掉之后，知道确切 URL 就能读到图。但 URL 是
+# /images/{24位userId}/{随机uuid}__名字.png，不可枚举；
+# 这是个人站，所有 agent 都属于同一个主人，逐用户图片权限没有实际意义。
+secureImageLinks: false
+
+fileConfig:
+  # endpoints 是「端点名 → 该端点的文件策略」的字典（不是数组）。
+  # 键同时写 "Brain" 和 "custom"：不同版本查的键不一样，两个都放不会报错，
+  # 也能保证自定义端点在两套代码路径下都吃到这套限制。
+  endpoints:
+    Brain:
+      fileLimit: 3
+      fileSizeLimit: 15
+      totalSizeLimit: 30
+      supportedMimeTypes:
+        - "text/plain"
+        - "text/markdown"
+        - "text/csv"
+        - "text/html"
+        - "application/json"
+        - "image/.*"
+    custom:
+      fileLimit: 3
+      fileSizeLimit: 15
+      totalSizeLimit: 30
+      supportedMimeTypes:
+        - "text/plain"
+        - "text/markdown"
+        - "text/csv"
+        - "text/html"
+        - "application/json"
+        - "image/.*"
+  serverFileSizeLimit: 30
+  avatarSizeLimit: 8
+  # 这里刻意不写 defaultLLMDeliveryPath。
+  # 踩过的坑：把 fallback 设成 text，会让**图片**也被判成"文本投递"，
+  # 于是图片走 agent 上传分支（作为 context 资源），普通对话没有 agent_id
+  # → 报 "No agent ID provided for agent file upload"，图片全部上传失败。
+  # 枚举只有 provider | text | none，图片必须留在 provider（原生多模态投递）。
+
+endpoints:
+  # 只保留"写提示词 + 换头像"的纯人格 Agent。
+  # capabilities 是白名单：不在里面的能力，构建器里连开关都不显示。
+  # skills / MCP 工具 / 代码执行 / 文件检索 / 联网 / 产物 / 子智能体 全部关掉。
+  agents:
+    capabilities: []
+    disableBuilder: false
+
+  custom:
+    - name: "Brain"
+      # 内部服务间用固定 key，用户永远看不到任何厂商的真 Key
+      apiKey: "${BRAIN_API_KEY}"
+      baseURL: "http://brain:8000/v1"
+      models:
+        # 这里列的是「厂商代号」，不是真实模型名。
+        # 代号背后用哪个模型由管理面板（/admin）决定，换型号不用改这个文件。
+        default:
+          - deepseek
+          - qwen
+          - glm
+          - hunyuan
+          - minimax
+          - gpt
+          - gemini
+          - grok
+          - openrouter
+        # true = 用 brain 的 /v1/models 覆盖上面的静态列表。
+        # 好处：没配好的厂商自动不出现，用户看不到点进去会报错的选项。
+        fetch: true
+      titleConvo: true
+      titleMethod: "completion"
+      # 起标题也走厂商代号，这样换模型不用改这里
+      titleModel: "deepseek"
+      # ★ 标题必须用中文。
+      #   默认 prompt 是 "Provide a concise, 5-word-or-less title ... title case"，
+      #   模型会照着"英文 + 首字母大写"办，于是新对话标题全是英文短语，
+      #   哪怕对话本身是中文 —— 用户看到的是"New Conversation"式的割裂感。
+      #   这里换成中文指令，并且显式说明"即使原文是英文也用中文"，
+      #   因为大部分对话里混着代码和英文术语，不点明它又会滑回英文。
+      titlePrompt: |
+        请为下面这段对话起一个简洁的中文标题。
+
+        要求：
+        - 用中文，不超过 20 个汉字，不要书名号或引号，不要以句号结尾。
+        - 只输出标题本身，不要任何解释、前缀或标点包裹。
+        - 即使对话内容主要是英文、代码或外文术语，标题也必须用中文概括。
+
+        对话：
+        {convo}
+      summarize: false
+      modelDisplayLabel: "Brain"
+      # 关键：LibreChat 原生支持按用户解析的占位符，不需要改它的代码。
+      # 网关靠这三个头知道"这句话是谁说的、在哪个 Agent 里、哪次会话"。
+      # 实测支持：{{LIBRECHAT_USER_ID}} / {{LIBRECHAT_BODY_CONVERSATIONID}}。
+      # 注意：{{LIBRECHAT_AGENT_ID}} 在本版本不会被替换（会原样发过来），
+      # 所以「是不是智能体对话」改用 agent.model=auto 这个隐藏别名来判断。
+      headers:
+        X-UMF-User: "{{LIBRECHAT_USER_ID}}"
+        X-UMF-Conv: "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+
+# 新建对话时看到的 9 张卡 = 9 个厂商。用户选的是"谁来答"，不是"哪个型号"。
+modelSpecs:
+  # enforce: true = 模型选择器里只剩下面这几张卡。
+  # 不写这个的话，LibreChat 会把内置的 openAI / google / anthropic 端点也列出来 ——
+  # 那些端点没配 Key，点进去必报错，是纯粹的坑。
+  #
+  # 注意：智能体对话不受这段约束。上游在 enforce 下强制要求请求带 spec，
+  # 而客户端进智能体对话时不发 spec（模型选择器被智能体选择器替代），
+  # 首条消息必然报 "No model spec selected"；补一个 spec 又会因为
+  # spec.endpoint(Brain) 和请求 endpoint(agents) 不一致而报 "Model spec mismatch"。
+  # 补丁见 deploy/patches/buildEndpointOption.js：agents 分支整体跳过校验，
+  # 用哪个厂商由 brain 按「你上一次选的厂商」路由 —— 智能体只负责换风格。
+  enforce: true
+  prioritize: true
+  list:
+    - name: "deepseek"
+      label: "DeepSeek"
+      description: "最便宜的通用中文聊天，日常首选"
+      preset:
+        endpoint: "Brain"
+        model: "deepseek"
+        greeting: "在呢，今天想聊点什么？"
+
+    - name: "qwen"
+      label: "通义千问"
+      description: "又快又便宜，长文和总结都行"
+      preset:
+        endpoint: "Brain"
+        model: "qwen"
+
+    - name: "glm"
+      label: "智谱 GLM"
+      description: "便宜，结构化输出稳"
+      preset:
+        endpoint: "Brain"
+        model: "glm"
+
+    - name: "hunyuan"
+      label: "腾讯混元"
+      description: "中文语感自然，单价低"
+      preset:
+        endpoint: "Brain"
+        model: "hunyuan"
+
+    - name: "minimax"
+      label: "MiniMax"
+      description: "长上下文，角色扮演自然（会先想一下）"
+      preset:
+        endpoint: "Brain"
+        model: "minimax"
+
+    - name: "gpt"
+      label: "ChatGPT"
+      description: "GPT 轻量版，够用且便宜；支持看图"
+      preset:
+        endpoint: "Brain"
+        # 故意写带型号的名字：LibreChat 靠模型名里的 vision 关键字
+        # （gpt-4.1 / gemini-2.5）决定要不要把图片真的发给模型。
+        # 路由仍然落到 gpt 这张卡上（brain 支持「代号+后缀」）。
+        model: "gpt-4.1-nano"
+
+    - name: "gemini"
+      label: "Gemini"
+      description: "便宜、快，长文本和图片都行"
+      preset:
+        endpoint: "Brain"
+        model: "gemini-2.5-flash-lite"
+
+    - name: "grok"
+      label: "Grok"
+      description: "风格跳脱；xAI 没有便宜型号，这张卡单价最高"
+      preset:
+        endpoint: "Brain"
+        model: "grok"
+
+    - name: "openrouter"
+      label: "聚合"
+      description: "一个 Key 通吃各家，型号由管理员定"
+      preset:
+        endpoint: "Brain"
+        model: "openrouter"

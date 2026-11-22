@@ -1,0 +1,202 @@
+name: umf-chat-lite
+
+# 精简版：目标是在 2C4G（阿里云轻量 ¥50–100 档）上跑得住。
+#
+# 和完整版的差别，只有四处，都是"砍掉长期占内存但个人用不上"的东西：
+#   1. 没有 litellm   —— 模型路由搬进 brain/app/upstream.py，省 350–500MB
+#   2. 没有 redis     —— 单机单实例不需要，省 50MB
+#   3. 没有 meilisearch —— 会话搜索用 Mongo 自带的正则，够 20 人用，省 150–300MB
+#   4. 没有 torch/LLMLingua —— 滚动摘要承担压缩主力，省 900MB–1.2GB
+#
+# 前端不构建、也不单独起容器：用 scripts/extract-static.sh 把镜像里已经编译好的
+# /app/client/dist 抽到宿主机 deploy/web/app，由 caddy 直接托管。
+# 做法和原因见 docs/06-低成本部署.md。
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - brain
+    mem_limit: 128m
+
+  # ---- 聊天后端 ----
+  api:
+    image: ghcr.io/danny-avila/librechat-dev-api:latest
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://mongodb:27017/LibreChat
+      CONFIG_PATH: /app/librechat.yaml
+      # 站点名。前端标签页、登录页、邮件抬头都用它（LibreChat 读 APP_TITLE）。
+      # 注意：这是主站的品牌名，和后台「知猪管理」是两个名字，别混。
+      APP_TITLE: ${APP_TITLE:-知猪}
+      # librechat.yaml 里 apiKey: "${BRAIN_API_KEY}" 要用它替换，否则会留一个字面量
+      BRAIN_API_KEY: ${BRAIN_API_KEY:-sk-brain-internal}
+      CREDS_KEY: ${CREDS_KEY}
+      CREDS_IV: ${CREDS_IV}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      # 没有邮件服务，注册完不能让用户卡在"请验证邮箱"。
+      # 注册口由邀请码 + Turnstile 把关（见 Caddy 的 /api/auth/register），
+      # 所以这里放开未验证登录是安全的。
+      ALLOW_UNVERIFIED_EMAIL_LOGIN: ${ALLOW_UNVERIFIED_EMAIL_LOGIN:-true}
+      ALLOW_EMAIL_LOGIN: "true"
+      ALLOW_PASSWORD_RESET: "false"
+      # 单机单副本：不声明这句，LibreChat 会拒绝一切"定时任务"写入（503）
+      SCHEDULES_SINGLE_PROCESS: "true"
+      # 三处关闭：没有 redis / 没有 meilisearch / 记忆统一走 brain
+      USE_REDIS: "false"
+      SEARCH: "false"
+      MEMORY_DISABLED: "true"
+    volumes:
+      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      # 上游 bug 的补丁：自定义端点缺 endpointType 时按配置兜一次，
+      # 不然 /api/agents/chat 会抛 "Unknown endpoint: Brain"。
+      # 只覆盖这一个文件，升级镜像后要重新生成（scripts/patch-custom-endpoint.sh）。
+      - ./patches/buildEndpointOption.js:/app/api/server/middleware/buildEndpointOption.js:ro
+      # 图片尺寸兜底：前端算不出宽高时由服务端用 sharp 量，见 patches/images.js 注释
+      - ./patches/images.js:/app/api/server/routes/files/images.js:ro
+      # 让首屏（未登录态）也能拿到 modelSpecs，否则模型卡会消失，详见 patches/config.js 注释
+      - ./patches/config.js:/app/api/server/routes/config.js:ro
+      - librechat_images:/app/client/public/images
+      - librechat_logs:/app/api/logs
+    depends_on:
+      - mongodb
+    mem_limit: 768m
+
+  # ---- 胶水层：模型路由 + 记忆注入 + UMF ----
+  brain:
+    build:
+      context: ./brain
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      DATABASE_URL: postgresql://umf:${POSTGRES_PASSWORD}@postgres:5432/umf
+      JWT_SECRET: ${JWT_SECRET}
+      # 管理面板口令。/admin 和 /api/admin/* 都靠它，没配就是彻底关掉
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # 运营后台：首次启动用这两个变量建 owner，之后在 /console 里改密码
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # 后台只读读 LibreChat 的库（用户/对话）。连不上不影响聊天。
+      MONGO_URL: ${MONGO_URL:-mongodb://mongodb:27017/LibreChat}
+      # 注册人机验证（留空 = 不启用，注册仍要求邀请码）
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:-}
+      # 注册转发用的上游地址
+      API_INTERNAL: ${API_INTERNAL:-http://api:3080}
+      # 加密存在库里的厂商密钥；不填则退回用 JWT_SECRET 派生
+      SECRET_KEY: ${SECRET_KEY:-}
+      BRAIN_DEBUG: ${BRAIN_DEBUG:-0}
+      # 模型别名表。留空 LITELLM_BASE 表示"直连上游"，这是省钱的关键开关。
+      UMF_MODELS_FILE: /app/models.json
+      # 8 家里填了哪几家，就自动只启用哪几家；没填的别名会被跳过，不影响启动
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      HUNYUAN_API_KEY: ${HUNYUAN_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      # 上下文总预算：这是省钱的总闸门，不是体验参数
+      HISTORY_BUDGET_TOKENS: ${HISTORY_BUDGET_TOKENS:-8000}
+      KEEP_RECENT_TURNS: ${KEEP_RECENT_TURNS:-8}
+      MEMORY_TOP_K: ${MEMORY_TOP_K:-8}
+      # 攒够多少条记忆变动就自动重算画像。0 = 关掉自动更新，只留手动「重新整理」。
+      PROFILE_REFRESH_EVERY: ${PROFILE_REFRESH_EVERY:-8}
+      COMPRESS_ENABLED: ${COMPRESS_ENABLED:-1}
+      # 必须是 models.json 里的别名，不是真实模型名
+      CHEAP_MODEL: ${CHEAP_MODEL:-qwen-flash}
+      MEM0_ENABLED: "0"
+      # 头像存储：填全 R2_* 就走 Cloudflare R2，不填就落 brain_data 卷。
+      # 用 R2 的 REST 对象接口 + 单桶 API Token，不需要 S3 Access Key。
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_API_TOKEN: ${R2_API_TOKEN:-}
+      R2_BUCKET: ${R2_BUCKET:-umf-avatars}
+      R2_JURISDICTION: ${R2_JURISDICTION:-default}
+      R2_PUBLIC_BASE: ${R2_PUBLIC_BASE:-}
+      AVATAR_DIR: /app/data/avatars
+      # IMA 知识库（腾讯 ima.qq.com）。填了这两项，后台「AI 管理」就能把
+      # 站内数据整理成文档推进知识库，并在提问时走 IMA 检索。
+      # 不填不影响使用：那一步会如实告诉你"未配置"，不会假装成功。
+      IMA_CLIENT_ID: ${IMA_CLIENT_ID:-}
+      IMA_API_KEY: ${IMA_API_KEY:-}
+      # 默认知识库名（后台下拉里会自动选中同名的那一个）
+      IMA_KB_NAME: ${IMA_KB_NAME:-chat.example.com}
+      # Umami 统计。后台页面在响应时按这两项拼 <script>；留空则不埋点。
+      # 开源版默认留空，站长填自己的实例即可。
+      UMF_UMAMI_SRC: ${UMF_UMAMI_SRC:-}
+      UMF_UMAMI_ID: ${UMF_UMAMI_ID:-}
+    volumes:
+      - ./brain/models.json:/app/models.json:ro
+      - brain_data:/app/data
+      # 与 api 共享**同一个**图片卷（librechat_images，api 那边已经在用）。
+      # ★ 不能新建一个卷：同一路径挂两个不同的卷，只有一个生效，
+      #   结果就是 brain 写进空卷、api 读的是另一个卷，图片永远看不到。
+      # 挂载点和 api 保持一致，写进去的路径就是 LibreChat 认的 /images/<uid>/<file>。
+      - librechat_images:/app/client/public/images
+    depends_on:
+      - postgres
+    mem_limit: 384m
+
+  # ---- 存储 ----
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    logging: *default-logging
+    # 默认 1GB 缓存会直接吃掉半个内存。256MB 对 20 人聊天绰绰有余。
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - mongo_data:/data/db
+    mem_limit: 512m
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: umf
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: umf
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=40
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    mem_limit: 384m
+
+volumes:
+  caddy_data:
+  caddy_config:
+  mongo_data:
+  pg_data:
+  librechat_images:
+  librechat_logs:
+  brain_data:

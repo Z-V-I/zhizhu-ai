@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>厂商与模型 · 管理</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px 64px; background: #0b0f17; color: #e6e8ee;
+         font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: #8a93a6; font-size: 13px; margin-bottom: 20px; }
+  .card { background: #121824; border: 1px solid #1e2735; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grow { flex: 1 1 180px; min-width: 0; }
+  .name { font-weight: 600; font-size: 15px; }
+  .code { color: #6b7488; font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+  input, select, button { font: inherit; border-radius: 8px; border: 1px solid #26303f;
+         background: #0e141e; color: #e6e8ee; padding: 8px 10px; }
+  input:focus, select:focus { outline: 2px solid #2f6fed; outline-offset: 1px; }
+  button { cursor: pointer; background: #1b2431; }
+  button:hover { background: #243043; }
+  button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  button.primary:hover { background: #3b7bf5; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid #26303f; color: #8a93a6; }
+  .ok { color: #4ade80; border-color: #1e5c3a; }
+  .bad { color: #f87171; border-color: #5c1e1e; }
+  .msg { font-size: 12px; color: #8a93a6; margin-top: 8px; min-height: 18px; word-break: break-all; }
+  .msg.err { color: #f87171; }
+  .hint { color: #6b7488; font-size: 12px; }
+  .top { display: flex; gap: 8px; align-items: center; margin-bottom: 20px; }
+  .top input { flex: 1; }
+  label.sw { display: inline-flex; align-items: center; gap: 6px; color: #8a93a6; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>厂商与模型</h1>
+  <div class="sub">用户只会看到「厂商」。每一家实际调用哪个模型，在这里定。改完立即生效，不用重启。</div>
+
+  <div class="top">
+    <input id="token" type="password" placeholder="管理员口令（ADMIN_TOKEN）" autocomplete="off" />
+    <button class="primary" id="load">加载</button>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (t, cls, txt) => { const n = document.createElement(t); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+let TOKEN = localStorage.getItem('umf_admin_token') || '';
+
+function api(path, opts = {}) {
+  return fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'X-Admin-Token': TOKEN, ...(opts.headers || {}) } })
+    .then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+      return data;
+    });
+}
+
+function card(p) {
+  const box = el('div', 'card');
+  const head = el('div', 'row');
+  head.append(el('div', 'name grow', p.label), el('span', 'code', p.code));
+
+  const status = el('span', 'pill ' + (p.ready ? 'ok' : 'bad'), p.ready ? '可用' : '未就绪');
+  head.append(status);
+
+  const sw = el('label', 'sw');
+  const cb = el('input'); cb.type = 'checkbox'; cb.checked = p.enabled;
+  cb.onchange = async () => {
+    try { await api('/api/admin/providers/' + p.code, { method: 'PATCH', body: JSON.stringify({ enabled: cb.checked }) }); load(); }
+    catch (e) { alert(e.message); }
+  };
+  sw.append(cb, document.createTextNode('启用'));
+  head.append(sw);
+  box.append(head);
+
+  if (!p.has_key) {
+    const r1 = el('div', 'row'); r1.style.marginTop = '12px';
+    const ki = el('input'); ki.type = 'password'; ki.placeholder = '粘贴 ' + p.label + ' 的 API Key'; ki.className = 'grow';
+    const kb = el('button', '', '保存 Key');
+    kb.onclick = async () => {
+      if (!ki.value.trim()) return;
+      try { await api('/api/admin/providers/' + p.code + '/key', { method: 'POST', body: JSON.stringify({ key: ki.value.trim() }) });
+            ki.value = ''; load(); }
+      catch (e) { alert(e.message); }
+    };
+    r1.append(ki, kb); box.append(r1);
+  } else {
+    const r0 = el('div', 'row'); r0.style.marginTop = '8px';
+    r0.append(el('span', 'hint', 'Key 已配置'));
+    const chg = el('button', '', '更换');
+    chg.onclick = async () => {
+      const nk = prompt('粘贴新的 API Key（留空则清除）'); if (nk === null) return;
+      try { await api('/api/admin/providers/' + p.code + '/key', { method: 'POST', body: JSON.stringify({ key: nk.trim() }) }); load(); }
+      catch (e) { alert(e.message); }
+    };
+    r0.append(chg); box.append(r0);
+  }
+
+  const r2 = el('div', 'row'); r2.style.marginTop = '10px';
+  const fetchBtn = el('button', '', '拉取模型列表');
+  const sel = el('select', 'grow');
+  const opt0 = el('option', '', p.models.length ? '— 选择模型 —' : '— 先拉取，或直接手填 —');
+  opt0.value = ''; sel.append(opt0);
+  // 当前型号可能不在已拉取的列表里：借聚合 Key 的卡、或者上次是手填的。
+  // 不把它补进去的话，面板会显示成「还没选」，看起来像配置丢了。
+  const known = p.models.indexOf(p.model_id) !== -1;
+  if (p.model_id && !known) {
+    const cur = el('option', '', p.model_id + '（当前）');
+    cur.value = p.model_id; cur.selected = true;
+    sel.append(cur);
+  }
+  p.models.forEach((m) => {
+    const o = el('option', '', m);
+    o.value = m; if (m === p.model_id) o.selected = true;
+    sel.append(o);
+  });
+  const manual = el('input', 'grow'); manual.placeholder = '手填模型名'; manual.value = p.model_id || '';
+  manual.style.display = 'none';
+
+  const saveBtn = el('button', 'primary', '保存并启用');
+  const toggleManual = el('button', '', '手填');
+  toggleManual.onclick = () => {
+    const show = manual.style.display === 'none';
+    manual.style.display = show ? '' : 'none';
+    sel.style.display = show ? 'none' : '';
+  };
+
+  fetchBtn.onclick = async () => {
+    fetchBtn.disabled = true; fetchBtn.textContent = '拉取中…';
+    try {
+      const r = await api('/api/admin/providers/' + p.code + '/fetch', { method: 'POST' });
+      if (r.error) alert('拉取失败：' + r.error + '\n\n可以点「手填」直接写模型名。');
+      load();
+    } catch (e) { alert(e.message); fetchBtn.disabled = false; fetchBtn.textContent = '拉取模型列表'; }
+  };
+
+  saveBtn.onclick = async () => {
+    const model = manual.style.display === 'none' ? sel.value : manual.value.trim();
+    if (!model) return alert('先选或填一个模型');
+    try {
+      await api('/api/admin/providers/' + p.code, { method: 'PATCH', body: JSON.stringify({ model_id: model, enabled: true }) });
+      load();
+    } catch (e) { alert(e.message); }
+  };
+
+  r2.append(fetchBtn, sel, manual, toggleManual, saveBtn);
+  box.append(r2);
+
+  const msg = el('div', 'msg');
+  if (p.last_fetch_error) { msg.className = 'msg err'; msg.textContent = '上次拉取：' + p.last_fetch_error; }
+  else if (p.last_fetch_at) { msg.textContent = '上次拉取：' + new Date(p.last_fetch_at).toLocaleString() + '，' + p.models.length + ' 个模型'; }
+  else if (!p.has_key) { msg.textContent = '先填 Key，再拉列表。'; }
+  box.append(msg);
+
+  return box;
+}
+
+async function load() {
+  if (!TOKEN) return;
+  const box = $('#list'); box.textContent = '加载中…';
+  try {
+    const data = await api('/api/admin/providers');
+    localStorage.setItem('umf_admin_token', TOKEN);
+    box.textContent = '';
+    data.providers.forEach((p) => box.append(card(p)));
+  } catch (e) {
+    box.textContent = '';
+    const m = el('div', 'msg err', '加载失败：' + e.message); box.append(m);
+  }
+}
+
+$('#token').value = TOKEN;
+$('#token').addEventListener('keydown', (e) => { if (e.key === 'Enter') { TOKEN = $('#token').value.trim(); load(); } });
+$('#load').onclick = () => { TOKEN = $('#token').value.trim(); load(); };
+if (TOKEN) load();
+</script>
+</body>
+</html>

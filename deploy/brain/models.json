@@ -1,0 +1,63 @@
+{
+  "$comment": "模型别名表。密钥只写变量名（key_env），永远不写明文，所以这个文件可以进 git。改模型名只改这里，不用动代码。",
+  "$model_names": "2026-11 的常见值。厂商改名很频繁，跑不通时先来这里核对官方文档，不要在代码里硬改。",
+
+  "default": {
+    "chat": "ds-chat",
+    "cheap": "qwen-flash"
+  },
+
+  "providers": {
+    "deepseek": { "base": "https://api.deepseek.com/v1", "key_env": "DEEPSEEK_API_KEY" },
+    "dashscope": { "base": "https://dashscope.aliyuncs.com/compatible-mode/v1", "key_env": "DASHSCOPE_API_KEY" },
+    "zhipu": { "base": "https://open.bigmodel.cn/api/paas/v4", "key_env": "ZHIPU_API_KEY" },
+    "hunyuan": { "base": "https://api.hunyuan.cloud.tencent.com/v1", "key_env": "HUNYUAN_API_KEY" },
+    "minimax": { "base": "https://api.minimax.chat/v1", "key_env": "MINIMAX_API_KEY" },
+    "openai": { "base": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY" },
+    "gemini": { "base": "https://generativelanguage.googleapis.com/v1beta/openai", "key_env": "GEMINI_API_KEY" },
+    "xai": { "base": "https://api.x.ai/v1", "key_env": "XAI_API_KEY" }
+  },
+
+  "aliases": {
+    "ds-chat": { "provider": "deepseek", "model": "deepseek-chat", "label": "DeepSeek V3" },
+    "ds-reasoner": {
+      "provider": "deepseek",
+      "model": "deepseek-reasoner",
+      "label": "DeepSeek R1",
+      "drop": ["temperature", "top_p", "presence_penalty", "frequency_penalty"]
+    },
+
+    "qwen-plus": { "provider": "dashscope", "model": "qwen-plus", "label": "通义千问 Plus" },
+    "qwen-flash": { "provider": "dashscope", "model": "qwen-flash", "label": "通义千问 Flash（抽取专用）", "max_tokens": 2048 },
+
+    "glm-4": { "provider": "zhipu", "model": "glm-4-plus", "label": "GLM-4 Plus" },
+    "glm-flash": { "provider": "zhipu", "model": "glm-4-flash", "label": "GLM-4 Flash（免费额度）" },
+
+    "hunyuan": { "provider": "hunyuan", "model": "hunyuan-turbos-latest", "label": "混元 TurboS" },
+    "minimax": { "provider": "minimax", "model": "abab6.5s-chat", "label": "MiniMax" },
+
+    "gpt-mini": { "provider": "openai", "model": "gpt-4.1-mini", "label": "GPT-4.1 mini" },
+    "gpt": { "provider": "openai", "model": "gpt-4.1", "label": "GPT-4.1" },
+    "gemini-flash": { "provider": "gemini", "model": "gemini-2.5-flash", "label": "Gemini 2.5 Flash" },
+    "grok": { "provider": "xai", "model": "grok-4-fast", "label": "Grok" },
+
+    "embed": {
+      "provider": "dashscope",
+      "model": "text-embedding-v3",
+      "label": "向量（1024 维）",
+      "dimensions": 1024
+    }
+  },
+
+  "fallback": {
+    "ds-chat": ["qwen-plus", "glm-4"],
+    "qwen-plus": ["glm-4", "ds-chat"],
+    "glm-4": ["qwen-plus"],
+    "gpt": ["ds-chat"],
+    "gemini-flash": ["ds-chat"],
+    "grok": ["ds-chat"]
+  },
+
+  "embed": { "alias": "embed" },
+  "cheap": { "alias": "qwen-flash" }
+}
