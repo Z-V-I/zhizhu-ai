@@ -20,9 +20,11 @@ services:
     mem_limit: 560m
 
   mongodb:
-    # 0.1 GB 缓存对"一个人用、几千条消息"完全够；
-    # 数据量大了它自然会去磁盘读，慢但不会崩。
-    command: ["mongod", "--wiredTigerCacheSizeGB", "0.1"]
+    # ★ 缓存不能设成 0.1 —— MongoDB 有硬性下限：
+    #     storage.wiredTiger.engineConfig.cacheSizeGB must be greater than or equal to 0.25
+    #   设低于 0.25 不是"省内存"，是直接拒绝启动（容器无限重启）。
+    #   所以这里保持 lite.yml 的 0.25，改用下面的 mem_limit 把总量压住：
+    #   缓存 0.25 GB + 连接/索引开销，在 320 MB 上限内刚好够跑。
     mem_limit: 320m
 
   postgres:

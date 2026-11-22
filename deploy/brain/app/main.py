@@ -50,12 +50,43 @@ log = logging.getLogger("brain")
 client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0))
 
 
+async def _mongo_retry(rounds: int = 40, every: float = 15.0) -> None:
+    """启动后连不上 Mongo 时的后台重连（最多 rounds × every 秒）。
+
+    为什么需要：compose 里 mongodb 重启的那几十秒内，它的 DNS 记录不存在，
+    pymongo 直接抛 "Name or service not known"。而 mg.connect() 只在 lifespan
+    里调用一次，于是 Mongo 后来起来了，brain 也永远停留在"用户追踪不可用"。
+    效果是后台用户列表一直空白，看起来像数据丢了 —— 实际只是没重连。
+    """
+    for _ in range(rounds):
+        await asyncio.sleep(every)
+        if mg.ready():
+            return
+        try:
+            await asyncio.to_thread(mg.connect)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("mongo retry failed: %s", exc)
+            continue
+        if mg.ready():
+            log.info("mongo connected after retry")
+            return
+    log.warning("mongo still unavailable after %ds, user tracking stays degraded", int(rounds * every))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init()
     await auth.ensure_owner()
     # Mongo 只给后台"看"用：连不上也不拦启动，只是用户追踪那一块降级
     mg.connect()
+    if not mg.ready():
+        # 启动时连不上不代表"永远连不上"——最常见的原因是 compose 里
+        # mongodb 正在重启（比如参数写错、或首次初始化），此刻它的 DNS 记录
+        # 还不存在，pymongo 报 "Name or service not known"。
+        # 以前这里只连一次，于是 Mongo 明明几十秒后就起来了，brain 却一直
+        # 显示"用户追踪不可用"，直到有人手动重启它（实际踩过）。
+        # 现在后台默默重试，最多 10 分钟，连上就停。
+        asyncio.create_task(_mongo_retry())
     await providers.seed()
     log.info("brain up (mem0=%s, compress=%s)", settings.mem0_enabled, settings.compress_enabled)
     yield
